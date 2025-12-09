@@ -281,7 +281,8 @@ def run_training_and_viz():
     K_LATENT_DIM = 32
     BATCH_SIZE = 64
     EPOCHS = 1000
-    LR = 1e-4
+    LR_BASE = 1e-4  # 基础学习率（前500epoch）
+    LR_DECAY = 1e-5 # 衰减后学习率（500epoch后）
     LAMBDA_K_PRODUCT = 10.0
     NON_ADJ_RATIO = 2 # 保留参数但实际不区分
     PRED_STEPS = 5000  # 预测步数
@@ -327,7 +328,18 @@ def run_training_and_viz():
     print(f"Using device: {device}")
     
     model = KoopmanCVAE(STATE_DIM, OBS_DIM, K_LATENT_DIM).to(device)
-    optimizer = optim.Adam(model.parameters(), lr=LR)
+    optimizer = optim.Adam(model.parameters(), lr=LR_BASE)  # 初始学习率1e-4
+    
+    # ===================== 新增：学习率调度器 =====================
+    # 定义学习率调整函数：epoch<500时lr=1e-4，epoch≥500时lr=1e-5
+    def lr_lambda(epoch):
+        if epoch < 500:
+            return 1.0  # 保持初始学习率
+        else:
+            return 0.1  # 学习率衰减为1/10（1e-4 * 0.1 = 1e-5）
+    
+    # 创建学习率调度器
+    lr_scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
     
     # 3. 训练循环
     print("开始训练...")
@@ -338,6 +350,10 @@ def run_training_and_viz():
     
     model.train()
     for epoch in range(EPOCHS):
+        # 打印当前学习率（可选，便于监控）
+        current_lr = optimizer.param_groups[0]['lr']
+        print(f"\nEpoch {epoch+1}/{EPOCHS} | 当前学习率: {current_lr:.1e}")
+        
         total_epoch_loss = 0
         total_epoch_psi_loss =0
         total_epoch_x_loss =0
@@ -412,6 +428,9 @@ def run_training_and_viz():
         # 打印日志
         print(f"\nEpoch {epoch + 1}: ")
         print(f"  Average Loss = {avg_loss:.6f}(Average psi_loss = {avg_psi_loss:.6f}, Average x_loss = {avg_x_loss:.6f},Average kl_loss = {avg_kl_loss:.6f},Average latent_loss = {avg_latent_loss:.6f})")
+
+        # ---------------------- 更新学习率 ----------------------
+        lr_scheduler.step()  # 每个Epoch后更新学习率
 
         # ---------------------- 每100Epoch绘制并保存预测图 ----------------------
         current_epoch = epoch + 1  # 转为1-based编号
@@ -518,6 +537,8 @@ def run_training_and_viz():
     # Loss曲线
     ax1 = fig.add_subplot(3, 3, 1)
     ax1.plot(loss_history, color='navy', label='Total Loss')
+    # 新增：添加学习率调整标记线
+    ax1.axvline(x=500, color='red', linestyle='--', label='LR Decay (1e-4 → 1e-5)')
     ax1.set_title("Training Loss (Final)")
     ax1.set_xlabel("Epoch")
     ax1.set_ylabel("Loss")
